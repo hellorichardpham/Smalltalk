@@ -3,6 +3,12 @@
 execname := '$RCSfile: catfile.st,v $' =~ '.*: (.*),v.*' at: 1.
 
 nl := Character nl.
+cFlag := false.
+dFlag := false.
+tFlag := false.
+uFlag := false.
+infile := nil.
+outfile := stdout.
 
 Character extend [
    isPrint [
@@ -95,6 +101,21 @@ Object subclass: Leaf [
    inorder: visitor prefix: string [
       visitor value: char value: string.
    ]
+   
+   	postorderBitConverstion: aBitstream [
+      outputStream setBit: 0.
+		stdout << 'asciiChar: ' << asciiChar << nl.
+		(8 to:1 by:-1) do: [:index | 
+         outputStream setBit: (asciiChar bitAt: index).
+		 stdout << (asciiChar bitAt: index) << ' '.
+		].
+		asciiChar = 256 ifTrue: [
+         outputStream setBit: 1.
+		].
+		asciiChar = 0 ifTrue: [
+         outputStream setBit: 0.
+		].
+    ]
 
 ]
 
@@ -129,10 +150,17 @@ Leaf subclass: Tree [
 		  ^ visitor.
 	  ]
    ]
+      postorderBitConverstion: outstream [
+      "Left child, then right child, then print for current node."
+      left postorderBitConverstion: outstream.
+      right postorderBitConverstion: outstream.
+	  "This line is for when we hit the inner nodes"
+      outstream setBit: 1.
+   ]
 ]
 
 Object subclass: BitStream [
-   |bitIndex byte myStream|
+   |bitIndex byte myStream bitIndexToSet byteResult|
    BitStream class >> new: fileStream [
       |result|
       result := super new.
@@ -142,9 +170,23 @@ Object subclass: BitStream [
    init: fileStream [
       myStream := fileStream.
       bitIndex := 1.
+	  byteResult := 0.
+      bitIndexToSet := 9.
    ]
+   
+    setBit: bit [
+      bitIndexToSet := bitIndexToSet - 1.
+      byteResult := byteResult bitAt: bitIndexToSet put: bit.
+      bitIndexToSet = 1 ifTrue: [
+		"When bitIndexToSet is 1, we have written all 8 bits"
+         myStream nextPutByte: byteResult.
+         byteResult := 0.
+         bitIndexToSet := 9.
+      ].
+   ]
+   
    "When you start it off, (index = 1, get the next byte and set the index to 9. We are going to go from left to right"
-   nextBit [
+   readNextBit [
       bitIndex = 1 ifTrue: [
          byte := myStream next.
          bitIndex := 9.
@@ -164,24 +206,36 @@ freqtable := ZeroArray new: 256.
 encodingTable := ZeroArray new: 256.
 sortcol := SortedCollection new.
 
-
-nl := Character nl.
-Smalltalk arguments size = 1
-	ifTrue: [
-		Smalltalk arguments do: [:filename |
-		|infile ordChar|
-		infile := FileStream open: filename
+(1 to: Smalltalk arguments size)
+do: [:index |
+	|args|
+ args := (Smalltalk arguments at: index).
+		(args includes: $-) ifTrue: [
+			stdout << 'Index: ' << index << nl.
+			stdout << 'Args: ' << args << nl.
+			(args includes: $c) ifTrue: [cFlag := true.].
+			(args includes: $d) ifTrue: [dFlag := true.].
+			(args includes: $t) ifTrue: [tFlag := true.].
+			(args includes: $u) ifTrue: [uFlag := true.].
+		] ifFalse: [
+			infile = nil ifTrue: [
+				infile := FileStream open: args
 							mode: FileStream read.
+			] ifFalse: [
+				"This is the case in that infile has been set"
+				outFile := FileStream open: args
+							mode: FileStream write.
+			]
+		].
+ stdout << 'args: ' << args << nl.
+].
 
-		[infile atEnd not] whileTrue:[
+[infile atEnd not] whileTrue:[
 			ordChar := infile next asInteger.
 			freqtable incr: ordChar.  
 		].
-		infile close. 
-		]
-	].
-
-	
+infile close. 
+ 
 
 
 freqtable keysAndValuesDo: [:key :value |
@@ -193,7 +247,7 @@ freqtable keysAndValuesDo: [:key :value |
 ].
 
 
-
+"Create the tree"
 freqtable keysAndValuesDo: [:key :value |
    (value notNil and: [value > 0]) ifTrue: [
 	sortcol size > 1 ifTrue: [ 
@@ -208,16 +262,41 @@ freqtable keysAndValuesDo: [:key :value |
 
 
 
+"Traverse the tree and create the encoding string 
+at the same time as creating the encoding table
+outputStream is our output file. We will write the
+encoding string through the stream"
+
+outputStream := BitStream new: outFile.
 
 [sortcol notEmpty] whileTrue: [
 	|tree|
 	tree := sortcol removeFirst.
 	stdout << tree << nl << nl.
 	tree inorder: [:char :string |
-		|index test| 
-		index := char asInteger.
-		"stdout << 'char[' << char << '] encoding at index: ' << index << ' Putting string: '	<< string << nl."
-		encodingTable at: index put: string.
+		|asciiChar test| 
+		
+		asciiChar := char asInteger.
+		outputStream setBit: 0.
+		stdout << 'asciiChar: ' << asciiChar << nl.
+		(8 to:1 by:-1) do: [:index | 
+         outputStream setBit: (asciiChar bitAt: index).
+		 stdout << (asciiChar bitAt: index) << ' '.
+		].
+		asciiChar = 256 ifTrue: [
+         outputStream setBit: 1.
+		].
+		asciiChar = 0 ifTrue: [
+         outputStream setBit: 0.
+		].
+		
+
+		"End the stream with a 1 so 
+		later we can determine when we done"
+		outputStream setBit: 1.
+		stdout << nl.
+		
+		encodingTable at: asciiChar put: string.
 	] prefix: ''.
 	stdout<< nl
 ].
@@ -232,22 +311,3 @@ freqtable keysAndValuesDo: [:key :value |
 			stdout << char << ' ' << freqValue << ' ' << encodingString << nl.		
 	]
 	]
-
-"This is the encoding string
-[sortcol notEmpty] whileTrue: [
-   |first|
-
-   first := sortcol removeFirst.
-   stdout << first << nl << nl.
-   first inorder: [:char :string |
-   stdout << '[' << char << ']=' << ' ' << string << nl.
-	] prefix: ''.
-	stdout<< nl << nl
-].
-"
-
-
-
-
-
-
