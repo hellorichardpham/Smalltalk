@@ -2,13 +2,7 @@
 "$Id: catfile.st,v 1.11 2012-03-02 15:10:13-08 - - $"
 execname := '$RCSfile: catfile.st,v $' =~ '.*: (.*),v.*' at: 1.
 
-nl := Character nl.
-cFlag := false.
-dFlag := false.
-tFlag := false.
-uFlag := false.
-infile := nil.
-outfile := stdout.
+
 
 Character extend [
    isPrint [
@@ -101,7 +95,7 @@ Object subclass: Leaf [
    inorder: visitor prefix: string [
       visitor value: char value: string.
    ]
-   
+   "
    	postorderBitConverstion: aBitstream [
       outputStream setBit: 0.
 		stdout << 'asciiChar: ' << asciiChar << nl.
@@ -116,6 +110,7 @@ Object subclass: Leaf [
          outputStream setBit: 0.
 		].
     ]
+	"
 
 ]
 
@@ -205,6 +200,13 @@ Object subclass: BitStream [
 freqtable := ZeroArray new: 256.
 encodingTable := ZeroArray new: 256.
 sortcol := SortedCollection new.
+nl := Character nl.
+cFlag := false.
+dFlag := false.
+tFlag := false.
+uFlag := false.
+infile := nil.
+outfile := stdout.
 
 (1 to: Smalltalk arguments size)
 do: [:index |
@@ -234,7 +236,6 @@ do: [:index |
 			ordChar := infile next asInteger.
 			freqtable incr: ordChar.  
 		].
-infile close. 
  
 
 
@@ -245,7 +246,6 @@ freqtable keysAndValuesDo: [:key :value |
 	  sortcol add: leaf
    ]
 ].
-
 
 "Create the tree"
 freqtable keysAndValuesDo: [:key :value |
@@ -267,8 +267,8 @@ at the same time as creating the encoding table
 outputStream is our output file. We will write the
 encoding string through the stream"
 
+cFlag ifTrue: [
 outputStream := BitStream new: outFile.
-
 [sortcol notEmpty] whileTrue: [
 	|tree|
 	tree := sortcol removeFirst.
@@ -277,6 +277,7 @@ outputStream := BitStream new: outFile.
 		|asciiChar test| 
 		
 		asciiChar := char asInteger.
+		
 		outputStream setBit: 0.
 		stdout << 'asciiChar: ' << asciiChar << nl.
 		(8 to:1 by:-1) do: [:index | 
@@ -300,7 +301,15 @@ outputStream := BitStream new: outFile.
 	] prefix: ''.
 	stdout<< nl
 ].
+].
 
+tFlag ifTrue: [
+tree inorder: [:char :string |
+		|asciiChar| 
+		asciiChar := char asInteger.
+		encodingTable at: asciiChar put: string.
+	] prefix: ''.
+	
 (0 to: encodingTable size - 1)
    do: [:index |
 		((freqtable at:index) notNil) ifTrue: [
@@ -311,3 +320,55 @@ outputStream := BitStream new: outFile.
 			stdout << char << ' ' << freqValue << ' ' << encodingString << nl.		
 	]
 	]
+].
+
+dFlag ifTrue: [
+	infile reset.
+
+	inputFile := BitStream new: infile.
+	outputStream := BitStream new: outfile.
+	treeStack := OrderedCollection new.
+
+	[inputFile atEnd] whileFalse: [
+		byteResult := 0.
+		bit := inputFile readNextBit.
+"
+If it is a 0, read the next 8 bits and reconstruct the byte
+"
+	(bit = 0) ifTrue: [
+		|nextBit|
+		(8 to:1 by:-1) do: [:bitIndex| 
+			nextBit := inputFile readNextBit.
+			stdout << nextBit << ' '.
+			byteResult := byteResult bitAt: bitIndex put: nextBit.
+		].
+		stdout << 'Byte Result: ' << byteResult << nl.
+		(byteResult = 0) ifTrue: [
+			"Read one more bit and see if it's a 1"
+			nextBit := inputFile readNextBit.
+			(nextBit = 1) ifTrue: [
+				"This is adding 256 to the byte since the 9th index 
+				in big endian form is 256" 
+				byteResult := byteResult bitAt: 9 put: 1.
+				"push this byteResult onto the stack"
+				"Not sure if this is right or if it should be 256"
+				treeStack add: (Leaf new: byteResult count: 1).
+			]
+		] ifFalse: [
+			"The byte result is non-0"
+			treeStack add: (Leaf new: byteResult count: 1).
+		]
+	] ifFalse: [
+		"If it is a 1, pop the 1-subtree from the stack, then pop the 0-subtree from the
+		stack, and create a new tree with both of those children and push the new tree
+		back on the stack.
+		"
+		(treeStack size > 1) ifTrue: [
+			rightSubtree = treeStack removeLast.
+			leftSubtree = treeStack removeLast.
+			"newRoot := Tree new: a char count: treeValue left: a right: b."
+			newTree := Tree new: '-1' count: -1 left: leftSubtree right: rightSubtree.
+		]
+	]
+	]
+].
