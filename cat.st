@@ -233,7 +233,7 @@ do: [:index |
 			ordChar := infile next asInteger.
 			freqtable incr: ordChar.  
 		].
- 
+ freqtable incr: 255.
 
 
 freqtable keysAndValuesDo: [:key :value |
@@ -280,7 +280,6 @@ outputStream := BitStream new: outFile.
 		asciiChar := char asInteger.	
 		encodingTable at: asciiChar put: string.
 	] prefix: ''.
-	"stdout<< nl"
 ].
 ].
 
