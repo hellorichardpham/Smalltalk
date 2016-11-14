@@ -95,23 +95,22 @@ Object subclass: Leaf [
    inorder: visitor prefix: string [
       visitor value: char value: string.
    ]
-   "
-   	postorderBitConverstion: aBitstream [
-      outputStream setBit: 0.
-		stdout << 'asciiChar: ' << asciiChar << nl.
-		(8 to:1 by:-1) do: [:index | 
-         outputStream setBit: (asciiChar bitAt: index).
-		 stdout << (asciiChar bitAt: index) << ' '.
-		].
-		asciiChar = 256 ifTrue: [
-         outputStream setBit: 1.
-		].
-		asciiChar = 0 ifTrue: [
-         outputStream setBit: 0.
-		].
-    ]
-	"
-
+   
+   postorderBitConverstion: stream [
+		|ascii|
+		stream setBit: 0.
+		ascii := char asInteger.
+		stdout << 'ascii: ' << ascii << ' '.
+		(8 to: 1 by: -1) do: [:index|
+			stream setBit: (ascii bitAt: index).
+			].
+			ascii = 256 ifTrue: [
+				stream setBit: 1.
+			].
+			ascii = 0 ifTrue: [
+				stream setBit: 0.
+			].
+	]
 ]
 
 
@@ -145,12 +144,12 @@ Leaf subclass: Tree [
 		  ^ visitor.
 	  ]
    ]
-      postorderBitConverstion: outstream [
+      postorderBitConverstion: stream [
       "Left child, then right child, then print for current node."
-      left postorderBitConverstion: outstream.
-      right postorderBitConverstion: outstream.
+      left postorderBitConverstion: stream.
+      right postorderBitConverstion: stream.
 	  "This line is for when we hit the inner nodes"
-      outstream setBit: 1.
+      stream setBit: 1.
    ]
 ]
 
@@ -213,8 +212,6 @@ do: [:index |
 	|args|
  args := (Smalltalk arguments at: index).
 		(args includes: $-) ifTrue: [
-			stdout << 'Index: ' << index << nl.
-			stdout << 'Args: ' << args << nl.
 			(args includes: $c) ifTrue: [cFlag := true.].
 			(args includes: $d) ifTrue: [dFlag := true.].
 			(args includes: $t) ifTrue: [tFlag := true.].
@@ -257,7 +254,7 @@ freqtable keysAndValuesDo: [:key :value |
 		newRoot := Tree new: a char count: treeValue left: a right: b.
 		sortcol add: newRoot.
 	]
-    ]
+    ].
 ].
 
 
@@ -272,38 +269,24 @@ outputStream := BitStream new: outFile.
 [sortcol notEmpty] whileTrue: [
 	|tree|
 	tree := sortcol removeFirst.
-	stdout << tree << nl << nl.
+	tree postorderBitConverstion: outputStream.
+	"End the stream with a 1 so 
+	later we can determine when we done"	
+	outputStream setBit: 1.
+	
+	"Create the encoding table"
 	tree inorder: [:char :string |
 		|asciiChar test| 
-		
-		asciiChar := char asInteger.
-		
-		outputStream setBit: 0.
-		stdout << 'asciiChar: ' << asciiChar << nl.
-		(8 to:1 by:-1) do: [:index | 
-         outputStream setBit: (asciiChar bitAt: index).
-		 stdout << (asciiChar bitAt: index) << ' '.
-		].
-		asciiChar = 256 ifTrue: [
-         outputStream setBit: 1.
-		].
-		asciiChar = 0 ifTrue: [
-         outputStream setBit: 0.
-		].
-		
-
-		"End the stream with a 1 so 
-		later we can determine when we done"
-		outputStream setBit: 1.
-		stdout << nl.
-		
+		asciiChar := char asInteger.	
 		encodingTable at: asciiChar put: string.
 	] prefix: ''.
-	stdout<< nl
+	"stdout<< nl"
 ].
 ].
 
 tFlag ifTrue: [
+|tree|
+tree := sortcol removeFirst.
 tree inorder: [:char :string |
 		|asciiChar| 
 		asciiChar := char asInteger.
@@ -335,6 +318,8 @@ dFlag ifTrue: [
 "
 If it is a 0, read the next 8 bits and reconstruct the byte
 "
+	stdout << 'This is the initial bit: ' << bit << nl.
+	
 	(bit = 0) ifTrue: [
 		|nextBit|
 		(8 to:1 by:-1) do: [:bitIndex| 
