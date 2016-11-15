@@ -2,6 +2,14 @@
 "$Id: catfile.st,v 1.11 2012-03-02 15:10:13-08 - - $"
 execname := '$RCSfile: catfile.st,v $' =~ '.*: (.*),v.*' at: 1.
 
+"The current problem is:
+the EOF character is 01100. When decompressing, we expect 8 bits?
+
+Are we writing
+0(8-bit representation of character)________(encoding string)
+Is there a way for us to test if our compression works correctly?
+
+"
 
 
 Character extend [
@@ -96,6 +104,7 @@ Object subclass: Leaf [
       visitor value: char value: string.
    ]
    
+   
    postorderBitConverstion: stream [
 		|ascii|
 		stream setBit: 0.
@@ -188,16 +197,34 @@ Object subclass: BitStream [
       bitIndex := bitIndex - 1.
       ^byte value bitAt: bitIndex
    ]
+   
+   readString: inputString [
+		inputString do:[:charIndex| 
+			(charIndex asString = '1')
+			ifTrue: [ self setBit: 1. ]
+			ifFalse: [self setBit: 0.].
+		]
+   ]
+   
+   pad [
+	[bitIndexToSet < 9] whileTrue: [
+		self setBit:0.
+	]
+   ]
+   
    atEnd [
       ^bitIndex = 1 and: [myStream atEnd]
    ]
    currByte [
       ^byte
    ]
+   currBitIndex [
+		^bitIndexToSet
+   ]
 ]
 
-freqtable := ZeroArray new: 256.
-encodingTable := ZeroArray new: 256.
+freqtable := ZeroArray new: 257.
+encodingTable := ZeroArray new: 257.
 sortcol := SortedCollection new.
 nl := Character nl.
 cFlag := false.
@@ -206,6 +233,7 @@ tFlag := false.
 uFlag := false.
 infile := nil.
 outfile := stdout.
+tree := nil.
 
 (1 to: Smalltalk arguments size)
 do: [:index |
@@ -222,7 +250,7 @@ do: [:index |
 							mode: FileStream read.
 			] ifFalse: [
 				"This is the case in that infile has been set"
-				outFile := FileStream open: args
+				outfile := FileStream open: args
 							mode: FileStream write.
 			]
 		].
@@ -233,7 +261,9 @@ do: [:index |
 			ordChar := infile next asInteger.
 			freqtable incr: ordChar.  
 		].
- freqtable incr: 255.
+infile reset.
+"Add EOF with value of 1"
+ freqtable incr: 256.
 
 
 freqtable keysAndValuesDo: [:key :value |
@@ -259,21 +289,14 @@ freqtable keysAndValuesDo: [:key :value |
 
 
 
-"Traverse the tree and create the encoding string 
-at the same time as creating the encoding table
-outputStream is our output file. We will write the
-encoding string through the stream"
+uFlag ifFalse: [
+	sortcol notEmpty ifTrue: [
+		tree := sortcol removeFirst.
+	].
+].
 
-cFlag ifTrue: [
-outputStream := BitStream new: outFile.
-[sortcol notEmpty] whileTrue: [
-	|tree|
-	tree := sortcol removeFirst.
-	tree postorderBitConverstion: outputStream.
-	"End the stream with a 1 so 
-	later we can determine when we done"	
-	outputStream setBit: 1.
-	
+"Create the encoding Table"
+uFlag ifFalse: [
 	"Create the encoding table"
 	tree inorder: [:char :string |
 		|asciiChar test| 
@@ -281,11 +304,43 @@ outputStream := BitStream new: outFile.
 		encodingTable at: asciiChar put: string.
 	] prefix: ''.
 ].
+
+"Traverse the tree and create the encoding string 
+at the same time as creating the encoding table
+outputStream is our output file. We will write the
+encoding string through the stream"
+
+cFlag ifTrue: [
+outputStream := BitStream new: outfile.
+	"postorderBitConversion converts the characters in the tree into bits
+	In the leaf's function, it'll set the first bit as 0 then print 8
+	more bits"
+	tree postorderBitConverstion: outputStream.
+	"End the stream with a 1 so 
+	later we can determine when we done"	
+	outputStream setBit: 1.
+	
+	[infile atEnd not] whileTrue:[
+			|asciiChar byteResult|
+			asciiChar := infile next asInteger.
+			encodingString := (encodingTable at: asciiChar).
+			outputStream readString: encodingString.
+			stdout << 'Reading encoding String: ' << encodingString << nl.
+		].
+	eofString := (encodingTable at: 256).
+	outputStream readString: eofString.
+	stdout << '2. Current Bit Index: ' << outputStream currBitIndex << nl.
+
+	outputStream pad.
+	stdout << 'After padding: Current Bit Index: ' << outputStream currBitIndex << nl.
+	infile close.
+	outfile close.
 ].
 
+"output the decoding tree to stdout 
+regardless of whether an outfile is present
+This is in the form of an encoding table"
 tFlag ifTrue: [
-|tree|
-tree := sortcol removeFirst.
 tree inorder: [:char :string |
 		|asciiChar| 
 		asciiChar := char asInteger.
@@ -305,8 +360,6 @@ tree inorder: [:char :string |
 ].
 
 dFlag ifTrue: [
-	infile reset.
-
 	inputFile := BitStream new: infile.
 	outputStream := BitStream new: outfile.
 	treeStack := OrderedCollection new.
@@ -336,10 +389,12 @@ If it is a 0, read the next 8 bits and reconstruct the byte
 				byteResult := byteResult bitAt: 9 put: 1.
 				"push this byteResult onto the stack"
 				"Not sure if this is right or if it should be 256"
+				stdout << 'ByteResult: ' << byteResult << nl.
 				treeStack add: (Leaf new: byteResult count: 1).
 			]
 		] ifFalse: [
 			"The byte result is non-0"
+			stdout << 'ByteResult: ' << byteResult << nl.
 			treeStack add: (Leaf new: byteResult count: 1).
 		]
 	] ifFalse: [
